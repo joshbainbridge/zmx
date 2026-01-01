@@ -10,6 +10,7 @@ Use spec: https://common-changelog.org/
 - New command `zmx [r]un <name> <cmd>...` which sends a command without attaching, creating session if needed
 - Use `XDG_RUNTIME_DIR` environment variable for socket directory (takes precedence over `TMPDIR` and `/tmp`)
 - New list flag `zmx [l]ist [--list]` that lists all session names with no extra information
+- New command `zmx [c]ompletions <shell>` that outputs auto-completion scripts for a given shell
 
 ### Changed
 
