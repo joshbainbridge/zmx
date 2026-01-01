@@ -296,7 +296,7 @@ pub fn main() !void {
     defer log_system.deinit();
 
     const cmd = args.next() orelse {
-        return list(&cfg);
+        return list(&cfg, false);
     };
 
     if (std.mem.eql(u8, cmd, "version") or std.mem.eql(u8, cmd, "v") or std.mem.eql(u8, cmd, "-v") or std.mem.eql(u8, cmd, "--version")) {
@@ -304,7 +304,8 @@ pub fn main() !void {
     } else if (std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "h") or std.mem.eql(u8, cmd, "-h")) {
         return help();
     } else if (std.mem.eql(u8, cmd, "list") or std.mem.eql(u8, cmd, "l")) {
-        return list(&cfg);
+        const short = if (args.next()) |arg| std.mem.eql(u8, arg, "--short") else false;
+        return list(&cfg, short);
     } else if (std.mem.eql(u8, cmd, "detach") or std.mem.eql(u8, cmd, "d")) {
         return detachAll(&cfg);
     } else if (std.mem.eql(u8, cmd, "kill") or std.mem.eql(u8, cmd, "k")) {
@@ -393,7 +394,7 @@ fn help() !void {
         \\  [a]ttach <name> [command...]  Attach to session, creating session if needed
         \\  [r]un <name> [command...]     Send command without attaching, creating session if needed
         \\  [d]etach                      Detach all clients from current session (ctrl+\ for current client)
-        \\  [l]ist                        List active sessions
+        \\  [l]ist [--short]              List active sessions
         \\  [k]ill <name>                 Kill a session and all attached clients
         \\  [hi]story <name>              Output session scrollback as plain text
         \\  [v]ersion                     Show version information
@@ -418,7 +419,7 @@ const SessionEntry = struct {
     }
 };
 
-fn list(cfg: *Cfg) !void {
+fn list(cfg: *Cfg, short: bool) !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
@@ -470,6 +471,7 @@ fn list(cfg: *Cfg) !void {
     }
 
     if (sessions.items.len == 0) {
+        if (short) return;
         try w.interface.print("no sessions found in {s}\n", .{cfg.socket_dir});
         try w.interface.flush();
         return;
@@ -478,7 +480,10 @@ fn list(cfg: *Cfg) !void {
     std.mem.sort(SessionEntry, sessions.items, {}, SessionEntry.lessThan);
 
     for (sessions.items) |session| {
-        if (session.is_error) {
+        if (short) {
+            if (session.is_error) continue;
+            try w.interface.print("{s}\n", .{session.name});
+        } else if (session.is_error) {
             try w.interface.print("session_name={s}\tstatus={s}\t(cleaning up)\n", .{ session.name, session.error_name.? });
         } else {
             try w.interface.print("session_name={s}\tpid={d}\tclients={d}\n", .{ session.name, session.pid.?, session.clients_len.? });
