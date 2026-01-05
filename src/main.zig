@@ -6,6 +6,7 @@ const ghostty_vt = @import("ghostty-vt");
 const ipc = @import("ipc.zig");
 const log = @import("log.zig");
 const completions = @import("completions.zig");
+const remote = @import("remote.zig");
 
 pub const version = build_options.version;
 pub const git_sha = build_options.git_sha;
@@ -348,7 +349,21 @@ pub fn main() !void {
     } else if (std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "h") or std.mem.eql(u8, cmd, "-h")) {
         return help();
     } else if (std.mem.eql(u8, cmd, "list") or std.mem.eql(u8, cmd, "l")) {
-        const short = if (args.next()) |arg| std.mem.eql(u8, arg, "--short") else false;
+        const first_arg = args.next() orelse
+            return list(&cfg, false);
+
+        const short = std.mem.eql(u8, first_arg, "--short");
+        const host_arg = if (short) args.next() else first_arg;
+
+        if (host_arg) |host| {
+            var ssh_args: std.ArrayList([]const u8) = .empty;
+            defer ssh_args.deinit(alloc);
+
+            try ssh_args.appendSlice(alloc, &[_][]const u8{ "zmx", "list" });
+            if (short) try ssh_args.appendSlice(alloc, &[_][]const u8{"--short"});
+            return remote.execute(alloc, host, ssh_args.items);
+        }
+
         return list(&cfg, short);
     } else if (std.mem.eql(u8, cmd, "completions") or std.mem.eql(u8, cmd, "c")) {
         const arg = args.next() orelse return;
@@ -360,6 +375,12 @@ pub fn main() !void {
         const session_name = args.next() orelse {
             return error.SessionNameRequired;
         };
+
+        if (remote.RemoteSessionArg.init(session_name)) |remote_session| {
+            const ssh_args = &[_][]const u8{ "zmx", "kill", remote_session.session_name };
+            return remote.execute(alloc, remote_session.host_name, ssh_args);
+        }
+
         return kill(&cfg, session_name);
     } else if (std.mem.eql(u8, cmd, "history") or std.mem.eql(u8, cmd, "hi")) {
         var session_name: ?[]const u8 = null;
@@ -381,6 +402,11 @@ pub fn main() !void {
         const session_name = args.next() orelse {
             return error.SessionNameRequired;
         };
+
+        if (remote.RemoteSessionArg.init(session_name)) |remote_session| {
+            const ssh_args = &[_][]const u8{ "zmx", "attach", remote_session.session_name };
+            return remote.execute(alloc, remote_session.host_name, ssh_args);
+        }
 
         var command_args: std.ArrayList([]const u8) = .empty;
         defer command_args.deinit(alloc);
@@ -420,6 +446,15 @@ pub fn main() !void {
         defer command_args.deinit(alloc);
         while (args.next()) |arg| {
             try command_args.append(alloc, arg);
+        }
+
+        if (remote.RemoteSessionArg.init(session_name)) |remote_session| {
+            var ssh_args: std.ArrayList([]const u8) = .empty;
+            defer ssh_args.deinit(alloc);
+
+            try ssh_args.appendSlice(alloc, &[_][]const u8{ "zmx", "run", remote_session.session_name });
+            try ssh_args.appendSlice(alloc, command_args.items);
+            return remote.execute(alloc, remote_session.host_name, ssh_args.items);
         }
 
         const clients = try std.ArrayList(*Client).initCapacity(alloc, 10);
@@ -475,7 +510,7 @@ fn help() !void {
         \\  [a]ttach <name> [command...]  Attach to session, creating session if needed
         \\  [r]un <name> [command...]     Send command without attaching, creating session if needed
         \\  [d]etach                      Detach all clients from current session (ctrl+\ for current client)
-        \\  [l]ist [--short]              List active sessions
+        \\  [l]ist [--short] [hostname]   List active sessions
         \\  [c]ompletions <shell>         Completion scripts for shell integration (bash, zsh, or fish)
         \\  [k]ill <name>                 Kill a session and all attached clients
         \\  [hi]story <name> [--vt|--html] Output session scrollback (--vt or --html for escape sequences)

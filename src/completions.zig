@@ -102,14 +102,31 @@ const zsh_completions =
     \\}
     \\
     \\_zmx_sessions() {
-    \\  local -a sessions
+    \\  local -a sessions hosts
     \\
-    \\  local local_sessions=$(zmx list --short 2>/dev/null)
-    \\  if [[ -n "$local_sessions" ]]; then
-    \\    sessions+=(${(f)local_sessions})
+    \\  # Check if user is typing hostname:session pattern
+    \\  if [[ $PREFIX == *:* ]]; then
+    \\    local hostname=${PREFIX%%:*}
+    \\
+    \\    local remote_sessions=$(zmx list --short $hostname 2>/dev/null)
+    \\    if [[ -n "$remote_sessions" ]]; then
+    \\      sessions+=(${(f)remote_sessions})
+    \\    fi
+    \\
+    \\    compadd -p "$hostname:" - ${sessions[@]}
+    \\  else
+    \\    local local_sessions=$(zmx list --short 2>/dev/null)
+    \\    if [[ -n "$local_sessions" ]]; then
+    \\      sessions+=(${(f)local_sessions})
+    \\    fi
+    \\
+    \\    if [[ -f ~/.ssh/config ]]; then
+    \\      hosts=($(awk '/^Host / && !/\*/ {print $2}' ~/.ssh/config))
+    \\    fi
+    \\
+    \\    _describe 'local session' sessions
+    \\    compadd -S ':' - ${hosts[@]}
     \\  fi
-    \\
-    \\  _describe 'local session' sessions
     \\}
     \\
     \\compdef _zmx zmx
