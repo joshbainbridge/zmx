@@ -75,6 +75,7 @@ const zsh_completions =
     \\        'detach:Detach all clients from current session'
     \\        'list:List active sessions'
     \\        'completions:Shell completion scripts'
+    \\        'sync:Syncronise binary to remote host'
     \\        'kill:Kill a session'
     \\        'history:Output session scrollback'
     \\        'version:Show version'
@@ -90,6 +91,9 @@ const zsh_completions =
     \\        completions|c)
     \\          _values 'shell' 'bash' 'zsh' 'fish'
     \\          ;;
+    \\        sync|s)
+    \\          _zmx_hosts
+    \\          ;;
     \\        list|l)
     \\          _values 'options' '--short'
     \\          ;;
@@ -99,6 +103,14 @@ const zsh_completions =
     \\      # Additional args for commands like 'attach' or 'run'
     \\      ;;
     \\  esac
+    \\}
+    \\
+    \\_zmx_hosts() {
+    \\  local -a hosts
+    \\  if [[ -f ~/.ssh/config ]]; then
+    \\    hosts=($(awk '/^Host / && !/\*/ {print $2}' ~/.ssh/config))
+    \\  fi
+    \\  _describe 'hostname' hosts
     \\}
     \\
     \\_zmx_sessions() {
