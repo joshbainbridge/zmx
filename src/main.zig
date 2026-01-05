@@ -324,9 +324,20 @@ pub fn main() !void {
         };
         return history(&cfg, session_name);
     } else if (std.mem.eql(u8, cmd, "attach") or std.mem.eql(u8, cmd, "a")) {
-        const session_name = args.next() orelse {
+        const session_arg = args.next() orelse {
             return error.SessionNameRequired;
         };
+
+        const session = SessionArg.init(session_arg);
+        if (session.host) |host| {
+            var ssh_args: std.ArrayList([]const u8) = .{};
+            try ssh_args.append(alloc, "zmx");
+            try ssh_args.append(alloc, "attach");
+            try ssh_args.append(alloc, session.name);
+            return executeSsh(alloc, host, ssh_args.items);
+        }
+
+        const session_name = session.name;
 
         var command_args: std.ArrayList([]const u8) = .empty;
         defer command_args.deinit(alloc);
@@ -419,6 +430,44 @@ fn help() !void {
     var w = std.fs.File.stdout().writer(&buf);
     try w.interface.print(help_text, .{});
     try w.interface.flush();
+}
+
+const SessionArg = struct {
+    host: ?[]const u8,
+    name: []const u8,
+
+    fn init(arg: []const u8) SessionArg {
+        if (std.mem.indexOf(u8, arg, ":")) |idx| {
+            return .{ .host = arg[0..idx], .name = arg[idx + 1 ..] };
+        }
+
+        return .{ .host = null, .name = arg };
+    }
+};
+
+fn executeSsh(alloc: std.mem.Allocator, host: []const u8, args: []const []const u8) !void {
+    var command: std.ArrayList([]const u8) = .{};
+    try command.append(alloc, "ssh");
+    try command.append(alloc, host);
+
+    for (args) |arg| {
+        try command.append(alloc, arg);
+    }
+
+    var child = std.process.Child.init(command.items, alloc);
+    child.stdin_behavior = .Inherit;
+    child.stdout_behavior = .Inherit;
+    child.stderr_behavior = .Inherit;
+
+    const term = try child.spawnAndWait();
+    const code: u8 = switch (term) {
+        .Exited => |v| v,
+        .Signal => 1,
+        .Stopped => 1,
+        .Unknown => 1,
+    };
+
+    std.process.exit(code);
 }
 
 const SessionEntry = struct {

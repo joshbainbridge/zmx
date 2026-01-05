@@ -28,48 +28,79 @@ const bash_completions =
 
 const zsh_completions =
     \\_zmx() {
-    \\  if [[ $CURRENT -eq 2 ]]; then
-    \\    local subcommands=('attach' 'kill' 'list')
-    \\    _describe 'subcommand' subcommands
-    \\    return
-    \\  fi
+    \\  local context state state_descr line
+    \\  typeset -A opt_args
     \\
-    \\  if [[ $CURRENT -eq 3 && ${words[2]} == (attach|kill) ]]; then
-    \\    local list=$(zmx list --short)
+    \\  _arguments -C \
+    \\    '1: :->commands' \
+    \\    '2: :->args' \
+    \\    '*: :->trailing' \
+    \\    && return 0
     \\
-    \\    local sessions=(${(f)list})
-    \\    _describe 'session' sessions
-    \\    return
+    \\  case $state in
+    \\    commands)
+    \\      local -a commands
+    \\      commands=(
+    \\        'attach:Attach to session, creating if needed'
+    \\        'run:Send command without attaching'
+    \\        'detach:Detach all clients from current session'
+    \\        'list:List active sessions'
+    \\        'completions:Shell completion scripts'
+    \\        'kill:Kill a session'
+    \\        'history:Output session scrollback'
+    \\        'version:Show version'
+    \\        'help:Show help message'
+    \\      )
+    \\      _describe 'command' commands
+    \\      ;;
+    \\    args)
+    \\      case $words[2] in
+    \\        attach|a|kill|k|run|r|history|hi)
+    \\          _zmx_sessions
+    \\          ;;
+    \\        completions|c)
+    \\          _values 'shell' 'bash' 'zsh' 'fish'
+    \\          ;;
+    \\        list|l)
+    \\          _values 'options' '--short'
+    \\          ;;
+    \\      esac
+    \\      ;;
+    \\    trailing)
+    \\      # Additional args for commands like 'attach' or 'run'
+    \\      ;;
+    \\  esac
+    \\}
+    \\
+    \\_zmx_sessions() {
+    \\  local -a sessions hosts
+    \\
+    \\  # Check if user is typing hostname:session pattern
+    \\  if [[ $PREFIX == *:* ]]; then
+    \\    local hostname=${PREFIX%%:*}
+    \\
+    \\    local remote_sessions=$(ssh $hostname zmx list --short 2>/dev/null)
+    \\    if [[ -n "$remote_sessions" ]]; then
+    \\      sessions+=(${(f)remote_sessions})
+    \\    fi
+    \\
+    \\    compadd -p "$hostname:" - ${sessions[@]}
+    \\  else
+    \\    local local_sessions=$(zmx list --short 2>/dev/null)
+    \\    if [[ -n "$local_sessions" ]]; then
+    \\      sessions+=(${(f)local_sessions})
+    \\    fi
+    \\
+    \\    if [[ -f ~/.ssh/config ]]; then
+    \\      hosts=($(awk '/^Host / && !/\*/ {print $2}' ~/.ssh/config))
+    \\    fi
+    \\
+    \\    _describe 'local session' sessions
+    \\    compadd -S ':' - ${hosts[@]}
     \\  fi
     \\}
     \\
     \\compdef _zmx zmx
-    \\
-    \\_ssh_zmx() {
-    \\  if [[ $CURRENT -eq 3 ]]; then
-    \\    local commands=('zmx')
-    \\    _describe 'remote command' commands
-    \\    return
-    \\  fi
-    \\
-    \\  if [[ $CURRENT -eq 4 && ${words[3]} == 'zmx' ]]; then
-    \\    local subcommands=('attach' 'kill' 'list')
-    \\    _describe 'remote subcommand' subcommands
-    \\    return
-    \\  fi
-    \\
-    \\  if [[ $CURRENT -eq 5 && ${words[3]} == 'zmx' && ${words[4]} == (attach|kill) ]]; then
-    \\    local list=$(ssh ${words[2]} zmx list --short)
-    \\
-    \\    local sessions=(${(f)list})
-    \\    _describe 'remote session' sessions
-    \\    return
-    \\  fi
-    \\
-    \\  _ssh # Fallback to default ssh completions for hostnames
-    \\}
-    \\
-    \\compdef _ssh_zmx ssh
 ;
 
 const fish_completions =
