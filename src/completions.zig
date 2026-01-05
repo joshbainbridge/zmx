@@ -46,6 +46,7 @@ const zsh_completions =
     \\        'detach:Detach all clients from current session'
     \\        'list:List active sessions'
     \\        'completions:Shell completion scripts'
+    \\        'sync:Syncronise binary to remote host'
     \\        'kill:Kill a session'
     \\        'history:Output session scrollback'
     \\        'version:Show version'
@@ -61,6 +62,9 @@ const zsh_completions =
     \\        completions|c)
     \\          _values 'shell' 'bash' 'zsh' 'fish'
     \\          ;;
+    \\        sync|s)
+    \\          _zmx_hosts
+    \\          ;;
     \\        list|l)
     \\          _values 'options' '--short'
     \\          ;;
@@ -72,6 +76,14 @@ const zsh_completions =
     \\  esac
     \\}
     \\
+    \\_zmx_hosts() {
+    \\  local -a hosts
+    \\  if [[ -f ~/.ssh/config ]]; then
+    \\    hosts=($(awk '/^Host / && !/\*/ {print $2}' ~/.ssh/config))
+    \\  fi
+    \\  _describe 'hostname' hosts
+    \\}
+    \\
     \\_zmx_sessions() {
     \\  local -a sessions hosts
     \\
@@ -79,7 +91,7 @@ const zsh_completions =
     \\  if [[ $PREFIX == *:* ]]; then
     \\    local hostname=${PREFIX%%:*}
     \\
-    \\    local remote_sessions=$(ssh $hostname zmx list --short 2>/dev/null)
+    \\    local remote_sessions=$(zmx list --short $hostname 2>/dev/null)
     \\    if [[ -n "$remote_sessions" ]]; then
     \\      sessions+=(${(f)remote_sessions})
     \\    fi

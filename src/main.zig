@@ -305,12 +305,28 @@ pub fn main() !void {
     } else if (std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "h") or std.mem.eql(u8, cmd, "-h")) {
         return help();
     } else if (std.mem.eql(u8, cmd, "list") or std.mem.eql(u8, cmd, "l")) {
-        const short = if (args.next()) |arg| std.mem.eql(u8, arg, "--short") else false;
+        const first_arg = args.next() orelse
+            return list(&cfg, false);
+
+        const short = std.mem.eql(u8, first_arg, "--short");
+        const host_arg = if (short) args.next() else first_arg;
+
+        if (host_arg) |host| {
+            var ssh_args: std.ArrayList([]const u8) = .{};
+            try ssh_args.append(alloc, "zmx");
+            try ssh_args.append(alloc, "list");
+            if (short) try ssh_args.append(alloc, "--short");
+            return executeSsh(alloc, host, ssh_args.items);
+        }
+
         return list(&cfg, short);
     } else if (std.mem.eql(u8, cmd, "completions") or std.mem.eql(u8, cmd, "c")) {
         const arg = args.next() orelse return;
         const shell = completions.Shell.fromString(arg) orelse return;
         return printCompletions(shell);
+    } else if (std.mem.eql(u8, cmd, "sync") or std.mem.eql(u8, cmd, "s")) {
+        const host = args.next() orelse return error.HostRequired;
+        return sync(alloc, host);
     } else if (std.mem.eql(u8, cmd, "detach") or std.mem.eql(u8, cmd, "d")) {
         return detachAll(&cfg);
     } else if (std.mem.eql(u8, cmd, "kill") or std.mem.eql(u8, cmd, "k")) {
@@ -408,6 +424,90 @@ fn printCompletions(shell: completions.Shell) !void {
     try w.interface.flush();
 }
 
+fn detectRemotePlatform(host: []const u8) ![]const u8 {
+    _ = host;
+    // TODO: use uname -s and uname -m on the remote host to queiry the platform.
+    // This should be a fairly simple operation. But just hardcoding to linux-x86_64
+    // for now.
+    return "linux-x86_64";
+}
+
+fn sync(alloc: std.mem.Allocator, host: []const u8) !void {
+    const platform = try detectRemotePlatform(host);
+
+    const tarball_name = try std.fmt.allocPrint(alloc, "zmx-{s}-{s}.tar.gz", .{ version, platform });
+    defer alloc.free(tarball_name);
+
+    const url = try std.fmt.allocPrint(alloc, "https://zmx.sh/a/{s}", .{tarball_name});
+    defer alloc.free(url);
+
+    const remote_path = try std.fmt.allocPrint(alloc, "{s}:~/.zmx_server/zmx", .{host});
+    defer alloc.free(remote_path);
+
+    const tmp_tarball = "/tmp/zmx-temp.tar.gz";
+    const tmp_binary = "/tmp/zmx";
+
+    var buf: [4096]u8 = undefined;
+    var w = std.fs.File.stdout().writer(&buf);
+
+    try w.interface.print("Downloading {s}...\n", .{url});
+    try w.interface.flush();
+
+    var curl = std.process.Child.init(&.{ "curl", "-L", url, "-o", tmp_tarball }, alloc);
+    curl.stdout_behavior = .Ignore;
+    curl.stderr_behavior = .Ignore;
+    _ = try curl.spawnAndWait();
+
+    try w.interface.print("Extracting...\n", .{});
+    try w.interface.flush();
+
+    var extract = std.process.Child.init(&.{ "tar", "-xzf", tmp_tarball, "-C", "/tmp/" }, alloc);
+    extract.stdout_behavior = .Ignore;
+    extract.stderr_behavior = .Ignore;
+    _ = try extract.spawnAndWait();
+
+    try w.interface.print("Creating remote directory...\n", .{});
+    try w.interface.flush();
+
+    var mkdir = std.process.Child.init(&.{ "ssh", host, "mkdir", "-p", "~/.zmx_server" }, alloc);
+    mkdir.stdout_behavior = .Ignore;
+    mkdir.stderr_behavior = .Ignore;
+    _ = try mkdir.spawnAndWait();
+
+    try w.interface.print("Copying to {s}...\n", .{host});
+    try w.interface.flush();
+
+    var scp = std.process.Child.init(&.{ "scp", tmp_binary, remote_path }, alloc);
+    scp.stdout_behavior = .Ignore;
+    scp.stderr_behavior = .Ignore;
+    _ = try scp.spawnAndWait();
+
+    std.fs.deleteFileAbsolute(tmp_binary) catch {};
+    std.fs.deleteFileAbsolute(tmp_tarball) catch {};
+
+    try w.interface.print("Verifying installation...\n", .{});
+    try w.interface.flush();
+
+    var verify = std.process.Child.init(&.{ "ssh", host, "~/.zmx_server/zmx", "version" }, alloc);
+    verify.stdout_behavior = .Ignore;
+    verify.stderr_behavior = .Ignore;
+    const term = try verify.spawnAndWait();
+
+    const code: u8 = switch (term) {
+        .Exited => |v| v,
+        else => 1,
+    };
+
+    if (code != 0) {
+        try w.interface.print("Verification failed!\n", .{});
+        try w.interface.flush();
+        return error.VerificationFailed;
+    }
+
+    try w.interface.print("Sync complete!\n", .{});
+    try w.interface.flush();
+}
+
 fn help() !void {
     const help_text =
         \\zmx - session persistence for terminal processes
@@ -418,8 +518,9 @@ fn help() !void {
         \\  [a]ttach <name> [command...]  Attach to session, creating session if needed
         \\  [r]un <name> [command...]     Send command without attaching, creating session if needed
         \\  [d]etach                      Detach all clients from current session (ctrl+\ for current client)
-        \\  [l]ist [--short]              List active sessions
+        \\  [l]ist [--short] [hostname]   List active sessions
         \\  [c]ompletions <shell>         Completion scripts for shell integration
+        \\  [s]ync <hostname>             Syncronise binary to remote host
         \\  [k]ill <name>                 Kill a session and all attached clients
         \\  [hi]story <name>              Output session scrollback as plain text
         \\  [v]ersion                     Show version information
@@ -448,7 +549,9 @@ const SessionArg = struct {
 fn executeSsh(alloc: std.mem.Allocator, host: []const u8, args: []const []const u8) !void {
     var command: std.ArrayList([]const u8) = .{};
     try command.append(alloc, "ssh");
+    try command.append(alloc, "-qt");
     try command.append(alloc, host);
+    try command.append(alloc, "PATH=\"$HOME/.zmx_server:$PATH\"");
 
     for (args) |arg| {
         try command.append(alloc, arg);
@@ -462,9 +565,7 @@ fn executeSsh(alloc: std.mem.Allocator, host: []const u8, args: []const []const 
     const term = try child.spawnAndWait();
     const code: u8 = switch (term) {
         .Exited => |v| v,
-        .Signal => 1,
-        .Stopped => 1,
-        .Unknown => 1,
+        else => 1,
     };
 
     std.process.exit(code);
